@@ -37,7 +37,8 @@ Split the term into combining forms + termination. Define backwards: termination
 -ectopia the displacement of x | -asthenia the lack of strength of x | -ocele the protrusion of (something from) x | -orrhaphy the suturing of x | -iatry the healing of x
 -ostat something which stops x | -ostasis the stopping of x
 -otherapy treatment by means of x | -ectasia the distention of x | -omalacia the softening of x | -osclerosis the hardening of x | -osclerotic pertaining to the hardening of x | -ostenosis the narrowing of x
--ospasm a spasm of x | -ismus a spasm of x
+-ospasm a spasm of x | -ismus a spasm of x (only the full ending -ismus means spasm)
+-ism a condition caused by the malfunction of x (NOT a spasm; used with glands, and the gloss names the gland in full: thymism = a condition caused by the malfunction of the thymus gland; thyroidism = a condition caused by the malfunction of the thyroid gland; adrenalism, pituitarism, parathyroidism likewise)
 -oplasia the formation of x | -opoiesis the formation of x | -odysplasia the defective formation of x | -opoietic pertaining to the formation of x
 -olith a calculus in x | -odynia pain in x | -algia pain involving x | -algic pertaining to pain involving x | -ics the science of x | -agra gouty pain in x | -omegaly the enlargement of x
 -edema the swelling of x | -onecrosis the death of x | -oplasty the surgical repairing of x | -ocentesis the surgical puncturing of x | -optosis the downward displacement of x
