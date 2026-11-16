@@ -134,8 +134,8 @@ async function api(path, body) {
   }
 }
 
-const script = (a) =>
-  a.map((x, i) => `Question ${i + 1} answer is: ${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
+const script = (a, from) =>
+  a.map((x, i) => `Question ${from + i + 1} answer is:${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
 
 function renderAnswers() {
   $("list").innerHTML = "";
@@ -145,6 +145,27 @@ function renderAnswers() {
     const b = document.createElement("b"); b.textContent = x.answer;
     li.append(s, b); $("list").append(li);
   });
+}
+
+// The natural voice is generated five answers at a time, in parallel, and the WAV pieces
+// are joined here into one loopable file. If any piece fails, the whole set is redone
+// with the backup voice so the loop never mixes voices or has gaps.
+async function voice(list) {
+  const groups = [];
+  for (let i = 0; i < list.length; i += 5) groups.push(script(list.slice(i, i + 5), i));
+  try {
+    const wavs = await Promise.all(
+      groups.map(async (text) => new Uint8Array(await (await api("/api/tts", { text })).arrayBuffer())),
+    );
+    const body = wavs.map((w) => w.subarray(44));
+    const size = body.reduce((n, b) => n + b.length, 0);
+    const head = wavs[0].slice(0, 44), view = new DataView(head.buffer);
+    view.setUint32(4, 36 + size, true); view.setUint32(40, size, true);
+    return new Blob([head, ...body], { type: "audio/wav" });
+  } catch {
+    const r = await api("/api/tts", { text: script(list, 0), engine: "basic" });
+    return r.blob();
+  }
 }
 
 function ensure() {
@@ -168,8 +189,7 @@ async function prepare(mine) {
   }
   if (!audioUrl) {
     say("Generating voice…");
-    const r = await api("/api/tts", { text: script(answers) });
-    const blob = await r.blob();
+    const blob = await voice(answers);
     if (mine !== version) return false;
     audioUrl = URL.createObjectURL(blob);
   }
