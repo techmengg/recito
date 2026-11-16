@@ -2,9 +2,10 @@
   "name": "recito",
   "private": true,
   "type": "module",
-  "engines": { "node": "22.x" },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest",
     "msedge-tts": "latest"
   }
 }
