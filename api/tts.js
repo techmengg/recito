@@ -1,11 +1,39 @@
-// Two free voices. "gemini" is the natural one (returns WAV); "basic" is Google Translate's
-// voice (returns MP3), used by the page when Gemini's speech quota or capacity runs out.
-const GEMINI_TTS = process.env.TTS_MODEL || "gemini-3.8-flash-lite-tts";
+// Two free voices. "gemini" is the natural one; "basic" is Google Translate's voice (MP3),
+// used by the page when every Gemini speech model is out of free quota or capacity.
+// Each Gemini speech model has its own small daily free quota, so they are tried in turn.
+const GEMINI_TTS = (
+  process.env.TTS_MODELS ||
+  "gemini-3.8-flash-lite-tts,gemini-3.8-flash-tts,gemini-3.1-flash-tts-preview,gemini-2.5-flash-preview-tts"
+).split(",");
 const VOICE = process.env.TTS_VOICE || "Kore";
 
+// The page joins pieces by skipping a 44-byte header, so always hand back plain
+// 24 kHz 16-bit mono WAV, wrapping raw PCM when a model returns it without a header.
+function wav(audio) {
+  if (audio.subarray(0, 4).toString("latin1") === "RIFF") {
+    const at = audio.indexOf("data");
+    if (at === 36) return audio;
+    audio = audio.subarray(at + 8);
+  }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + audio.length, 4); h.write("WAVEfmt ", 8);
+  h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(24000, 24); h.writeUInt32LE(48000, 28); h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(audio.length, 40);
+  return Buffer.concat([h, audio]);
+}
+
 async function gemini(text) {
+  let last;
+  for (const model of GEMINI_TTS) {
+    try { return await speak(model, text); } catch (e) { last = e; }
+  }
+  throw last;
+}
+
+async function speak(model, text) {
   const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       signal: AbortSignal.timeout(25000),
@@ -24,7 +52,7 @@ async function gemini(text) {
   if (!r.ok) throw new Error(data?.error?.message || "Voice failed (" + r.status + ")");
   const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;
   if (!part?.data) throw new Error("Voice returned no audio");
-  return { type: part.mimeType || "audio/wav", audio: Buffer.from(part.data, "base64") };
+  return { type: "audio/wav", audio: wav(Buffer.from(part.data, "base64")) };
 }
 
 // Google Translate's endpoint takes at most 200 characters per request.

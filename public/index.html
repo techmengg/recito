@@ -147,12 +147,12 @@ function renderAnswers() {
   });
 }
 
-// The natural voice is generated five answers at a time, in parallel, and the WAV pieces
+// The natural voice is generated ten answers at a time, in parallel, and the WAV pieces
 // are joined here into one loopable file. If any piece fails, the whole set is redone
 // with the backup voice so the loop never mixes voices or has gaps.
 async function voice(list) {
   const groups = [];
-  for (let i = 0; i < list.length; i += 5) groups.push(script(list.slice(i, i + 5), i));
+  for (let i = 0; i < list.length; i += 10) groups.push(script(list.slice(i, i + 10), i));
   try {
     const wavs = await Promise.all(
       groups.map(async (text) => new Uint8Array(await (await api("/api/tts", { text })).arrayBuffer())),
