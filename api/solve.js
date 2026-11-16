@@ -53,8 +53,8 @@ async function ask(model, key, images, ms) {
   const answers = JSON.parse(text || "{}").answers;
   if (!answers?.length) throw new Error("The model returned no answers");
   return answers.map((a) => ({
-    question: a.question.replace(/^s*d+[.)]s*/, ""),
-    answer: a.answer.replace(/p.t./gi, "pertaining to"),
+    question: a.question.replace(/^\s*\d+[.)]\s*/, ""),
+    answer: a.answer.replace(/\bp\.t\./gi, "pertaining to"),
   }));
 }
 
