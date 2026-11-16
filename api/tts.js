@@ -9,11 +9,13 @@ const VOICE = process.env.TTS_VOICE || "Kore";
 
 // The page joins pieces by skipping a 44-byte header, so always hand back plain
 // 24 kHz 16-bit mono WAV, wrapping raw PCM when a model returns it without a header.
+// Only the samples are kept: Gemini appends a provenance metadata chunk after the sound,
+// which plays as a burst of static if it is treated as audio.
 function wav(audio) {
   if (audio.subarray(0, 4).toString("latin1") === "RIFF") {
     const at = audio.indexOf("data");
-    if (at === 36) return audio;
-    audio = audio.subarray(at + 8);
+    const size = Math.min(audio.readUInt32LE(at + 4), audio.length - at - 8);
+    audio = audio.subarray(at + 8, at + 8 + size - (size % 2));
   }
   const h = Buffer.alloc(44);
   h.write("RIFF", 0); h.writeUInt32LE(36 + audio.length, 4); h.write("WAVEfmt ", 8);
