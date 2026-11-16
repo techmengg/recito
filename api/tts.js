@@ -11,7 +11,8 @@ async function gemini(text) {
       signal: AbortSignal.timeout(25000),
       headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: "Read this aloud exactly as written, clearly and at a steady pace:\n\n" + text }] }],
+        // Send only the words to be spoken: the speech model reads everything it is given.
+        contents: [{ parts: [{ text }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },

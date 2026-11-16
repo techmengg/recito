@@ -228,6 +228,8 @@ async function start() {
 }
 
 playBtn.onclick = () => (playing ? stop() : start());
+// Safety net in case a browser ignores the loop flag: restart by hand when the track ends.
+audio.addEventListener("ended", () => { if (playing) { audio.currentTime = 0; audio.play().catch(() => {}); } });
 $("rate").onchange = () => { audio.playbackRate = +$("rate").value; };
 // Setting src resets playbackRate on some browsers.
 audio.addEventListener("loadedmetadata", () => { audio.playbackRate = +$("rate").value; });
