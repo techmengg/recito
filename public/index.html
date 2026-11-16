@@ -134,14 +134,14 @@ async function api(path, body) {
   }
 }
 
-const script = (a, from) =>
-  a.map((x, i) => `Question ${from + i + 1} answer is:${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
+const script = (a) =>
+  a.map((x) => `Question ${x.number} answer is: ${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
 
 function renderAnswers() {
   $("list").innerHTML = "";
   answers.forEach((x, i) => {
     const li = document.createElement("li");
-    const s = document.createElement("small"); s.textContent = `${i + 1}. ${x.question}`;
+    const s = document.createElement("small"); s.textContent = `${x.number}. ${x.question}`;
     const b = document.createElement("b"); b.textContent = x.answer;
     li.append(s, b); $("list").append(li);
   });
@@ -152,7 +152,7 @@ function renderAnswers() {
 // with the backup voice so the loop never mixes voices or has gaps.
 async function voice(list) {
   const groups = [];
-  for (let i = 0; i < list.length; i += 10) groups.push(script(list.slice(i, i + 10), i));
+  for (let i = 0; i < list.length; i += 10) groups.push(script(list.slice(i, i + 10)));
   try {
     const wavs = await Promise.all(
       groups.map(async (text) => new Uint8Array(await (await api("/api/tts", { text })).arrayBuffer())),
@@ -163,7 +163,7 @@ async function voice(list) {
     view.setUint32(4, 36 + size, true); view.setUint32(40, size, true);
     return new Blob([head, ...body], { type: "audio/wav" });
   } catch {
-    const r = await api("/api/tts", { text: script(list, 0), engine: "basic" });
+    const r = await api("/api/tts", { text: script(list), engine: "basic" });
     return r.blob();
   }
 }

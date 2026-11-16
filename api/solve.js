@@ -14,11 +14,16 @@ const SCHEMA = {
       items: {
         type: "OBJECT",
         properties: {
-          question: { type: "STRING", description: "The term or question exactly as printed" },
+          number: {
+            type: "INTEGER",
+            description:
+              "The question number printed next to it. If none is printed, continue counting from the previous question (the first is 1), carrying on across images.",
+          },
+          question: { type: "STRING", description: "The term or question exactly as printed, without its number" },
           answer: { type: "STRING" },
         },
-        required: ["question", "answer"],
-        propertyOrdering: ["question", "answer"],
+        required: ["number", "question", "answer"],
+        propertyOrdering: ["number", "question", "answer"],
       },
     },
   },
@@ -39,7 +44,12 @@ async function ask(model, key, images, ms) {
             role: "user",
             parts: [
               ...images.map((data) => ({ inlineData: { mimeType: "image/jpeg", data } })),
-              { text: "Answer every question shown, in order." },
+              {
+                text:
+                  "Answer every question shown, in order. The images are consecutive pages of one test, given in order. " +
+                  "Give each question its number: use the number printed beside it when there is one (a later page may start at 26, for example); " +
+                  "when a page has no printed numbers, keep counting on from the last question of the page before. Do not skip or merge questions, and do not treat titles or instructions as questions.",
+              },
             ],
           },
         ],
@@ -52,10 +62,15 @@ async function ask(model, key, images, ms) {
   const text = data.candidates?.[0]?.content?.parts?.find((p) => p.text && !p.thought)?.text;
   const answers = JSON.parse(text || "{}").answers;
   if (!answers?.length) throw new Error("The model returned no answers");
-  return answers.map((a) => ({
+  const out = answers.map((a, i) => ({
+    number: Number.isInteger(a.number) && a.number > 0 ? a.number : i + 1,
     question: a.question.replace(/^\s*\d+[.)]\s*/, ""),
     answer: a.answer.replace(/\bp\.t\./gi, "pertaining to"),
   }));
+  // Photos uploaded out of order are put right, but only when every number is distinct;
+  // repeated numbers mean separate sections, which stay in the order they were read.
+  if (new Set(out.map((a) => a.number)).size === out.length) out.sort((a, b) => a.number - b.number);
+  return out;
 }
 
 async function fast(key, images) {
