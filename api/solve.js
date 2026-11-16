@@ -66,6 +66,6 @@ export default async function handler(req, res) {
     res.status(200).json({ answers });
   } catch (e) {
     const status = e instanceof Anthropic.APIError ? e.status || 502 : 500;
-    res.status(status >= 400 ? status : 502).json({ error: e.message || "Solve failed" });
+    res.status(status >= 400 ? status : 502).json({ error: e?.error?.error?.message || e.message || "Solve failed" });
   }
 }

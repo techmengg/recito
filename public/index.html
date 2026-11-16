@@ -59,7 +59,7 @@ const audio = $("audio"), playBtn = $("play"), statusEl = $("status");
 let images = [];          // [{b64, url}]
 let answers = null;       // solved answers for current images
 let audioUrl = null;      // looping mp3 for current answers
-let playing = false, job = 0;
+let playing = false, version = 0, prep = null, timer = 0;
 
 const say = (t, err) => { statusEl.textContent = t; statusEl.className = err ? "err" : ""; };
 
@@ -87,13 +87,16 @@ async function shrink(file) {
 }
 
 function invalidate() {
-  job++; answers = null;
+  version++; prep = null; answers = null; clearTimeout(timer);
   if (audioUrl) URL.revokeObjectURL(audioUrl);
   audioUrl = null;
   $("list").innerHTML = "";
   if (playing) stop();
   playBtn.disabled = !images.length;
-  say(images.length ? `${images.length} photo${images.length > 1 ? "s" : ""} ready. Press Play.` : "Add photos, then press Play.");
+  if (!images.length) return say("Add photos, then press Play.");
+  // Start working right away so Play is instant; a short delay batches photos added back to back.
+  say("Reading questions…");
+  timer = setTimeout(() => ensure().catch((e) => say(e.message || "Something went wrong", true)), 700);
 }
 
 function renderThumbs() {
@@ -132,7 +135,7 @@ async function api(path, body) {
 }
 
 const script = (a) =>
-  a.map((x, i) => `Question ${i + 1} answer: ${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
+  a.map((x, i) => `Question ${i + 1} answer is: ${x.answer.replace(/\bp\.t\./gi, "pertaining to")}.`).join("\n\n");
 
 function renderAnswers() {
   $("list").innerHTML = "";
@@ -144,13 +147,22 @@ function renderAnswers() {
   });
 }
 
-async function prepare() {
-  const mine = ++job;
+function ensure() {
+  clearTimeout(timer);
+  if (!prep || prep.v !== version) {
+    const p = { v: version };
+    p.promise = prepare(version).catch((e) => { if (prep === p) prep = null; throw e; });
+    prep = p;
+  }
+  return prep.promise;
+}
+
+async function prepare(mine) {
   if (!answers) {
     say("Reading questions…");
     const r = await api("/api/solve", { images: images.map((i) => i.b64) });
     const data = await r.json();
-    if (mine !== job) return false;
+    if (mine !== version) return false;
     if (!data.answers?.length) throw new Error("No questions found in the photos");
     answers = data.answers; renderAnswers();
   }
@@ -158,9 +170,10 @@ async function prepare() {
     say("Generating voice…");
     const r = await api("/api/tts", { text: script(answers) });
     const blob = await r.blob();
-    if (mine !== job) return false;
+    if (mine !== version) return false;
     audioUrl = URL.createObjectURL(blob);
   }
+  if (!playing) say(`${answers.length} answers ready. Press Play.`);
   return true;
 }
 
@@ -172,8 +185,8 @@ function setPlaying(on) {
 }
 
 function stop() {
-  job++; audio.pause(); setPlaying(false);
-  if (answers) say(`${answers.length} answers. Press Play to loop.`);
+  audio.pause(); setPlaying(false);
+  if (audioUrl) say(`${answers.length} answers ready. Press Play.`);
 }
 
 async function start() {
@@ -181,7 +194,8 @@ async function start() {
   audio.loop = true;
   if (!audioUrl) { audio.src = SILENCE; audio.play().catch(() => {}); }
   try {
-    if (!(await prepare()) || !playing) return;
+    const v = version;
+    if (!(await ensure()) || !playing || v !== version) return;
     audio.src = audioUrl;
     audio.playbackRate = +$("rate").value;
     await audio.play();
