@@ -1,60 +1,43 @@
-// Two free voices. "gemini" is the natural one; "basic" is Google Translate's voice (MP3),
-// used by the page when every Gemini speech model is out of free quota or capacity.
-// Each Gemini speech model has its own small daily free quota, so they are tried in turn.
-const GEMINI_TTS = (
-  process.env.TTS_MODELS ||
-  "gemini-3.8-flash-lite-tts,gemini-3.8-flash-tts,gemini-3.1-flash-tts-preview,gemini-2.5-flash-preview-tts"
-).split(",");
-const VOICE = process.env.TTS_VOICE || "Kore";
+// Two voices, neither with a daily limit. The default is Piper, an open-source model that
+// runs inside this function (downloaded at build time by scripts/fetch-voice.mjs).
+// "basic" is Google Translate's voice (MP3), which the page falls back to if Piper fails.
+import path from "node:path";
+import sherpa from "sherpa-onnx";
 
-// The page joins pieces by skipping a 44-byte header, so always hand back plain
-// 24 kHz 16-bit mono WAV, wrapping raw PCM when a model returns it without a header.
-// Only the samples are kept: Gemini appends a provenance metadata chunk after the sound,
-// which plays as a burst of static if it is treated as audio.
-function wav(audio) {
-  if (audio.subarray(0, 4).toString("latin1") === "RIFF") {
-    const at = audio.indexOf("data");
-    const size = Math.min(audio.readUInt32LE(at + 4), audio.length - at - 8);
-    audio = audio.subarray(at + 8, at + 8 + size - (size % 2));
-  }
-  const h = Buffer.alloc(44);
-  h.write("RIFF", 0); h.writeUInt32LE(36 + audio.length, 4); h.write("WAVEfmt ", 8);
-  h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
-  h.writeUInt32LE(24000, 24); h.writeUInt32LE(48000, 28); h.writeUInt16LE(2, 32);
-  h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(audio.length, 40);
-  return Buffer.concat([h, audio]);
-}
+const DIR = path.join(process.cwd(), "models", "vits-piper-en_US-lessac-medium");
+const SPEED = +process.env.TTS_SPEED || 1;
 
-async function gemini(text) {
-  let last;
-  for (const model of GEMINI_TTS) {
-    try { return await speak(model, text); } catch (e) { last = e; }
-  }
-  throw last;
-}
-
-async function speak(model, text) {
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      signal: AbortSignal.timeout(25000),
-      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        // Send only the words to be spoken: the speech model reads everything it is given.
-        contents: [{ parts: [{ text }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
-        },
-      }),
+// Loading the model takes about a second, so keep it for later requests to this instance.
+let engine;
+function piper(text) {
+  engine ||= sherpa.createOfflineTts({
+    offlineTtsModelConfig: {
+      offlineTtsVitsModelConfig: {
+        model: path.join(DIR, "en_US-lessac-medium.onnx"),
+        tokens: path.join(DIR, "tokens.txt"),
+        dataDir: path.join(DIR, "espeak-ng-data"),
+        noiseScale: 0.667,
+        noiseScaleW: 0.8,
+        lengthScale: 1.0,
+      },
+      numThreads: 1,
+      debug: 0,
+      provider: "cpu",
     },
-  );
-  const data = await r.json();
-  if (!r.ok) throw new Error(data?.error?.message || "Voice failed (" + r.status + ")");
-  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;
-  if (!part?.data) throw new Error("Voice returned no audio");
-  return { type: "audio/wav", audio: wav(Buffer.from(part.data, "base64")) };
+    maxNumSentences: 1,
+  });
+  const { samples, sampleRate } = engine.generate({ text, sid: 0, speed: SPEED });
+  if (!samples?.length) throw new Error("Voice returned no audio");
+
+  // 16-bit mono WAV with a plain 44-byte header, which is what the page expects when joining pieces.
+  const out = Buffer.alloc(44 + samples.length * 2);
+  out.write("RIFF", 0); out.writeUInt32LE(36 + samples.length * 2, 4); out.write("WAVEfmt ", 8);
+  out.writeUInt32LE(16, 16); out.writeUInt16LE(1, 20); out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(sampleRate, 24); out.writeUInt32LE(sampleRate * 2, 28); out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34); out.write("data", 36); out.writeUInt32LE(samples.length * 2, 40);
+  for (let i = 0; i < samples.length; i++)
+    out.writeInt16LE(Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767), 44 + i * 2);
+  return { type: "audio/wav", audio: out };
 }
 
 // Google Translate's endpoint takes at most 200 characters per request.
@@ -90,11 +73,11 @@ export default async function handler(req, res) {
   if (process.env.ACCESS_CODE && req.headers["x-code"] !== process.env.ACCESS_CODE)
     return res.status(401).json({ error: "Wrong access code" });
 
-  const text = String(req.body?.text || "").slice(0, 12000);
+  const text = String(req.body?.text || "").slice(0, 6000);
   if (!text.trim()) return res.status(400).json({ error: "No text" });
 
   try {
-    const { type, audio } = req.body?.engine === "basic" ? await basic(text) : await gemini(text);
+    const { type, audio } = req.body?.engine === "basic" ? await basic(text) : piper(text);
     res.setHeader("Content-Type", type);
     res.setHeader("Cache-Control", "no-store");
     res.status(200).send(audio);

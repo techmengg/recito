@@ -2,7 +2,7 @@
   "name": "recito",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": "22.x"
-  }
+  "engines": { "node": "22.x" },
+  "scripts": { "build": "node scripts/fetch-voice.mjs" },
+  "dependencies": { "sherpa-onnx": "1.13.8" }
 }

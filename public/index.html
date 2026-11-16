@@ -147,12 +147,12 @@ function renderAnswers() {
   });
 }
 
-// The natural voice is generated ten answers at a time, in parallel, and the WAV pieces
+// The natural voice is generated five answers at a time, in parallel, and the WAV pieces
 // are joined here into one loopable file. If any piece fails, the whole set is redone
 // with the backup voice so the loop never mixes voices or has gaps.
 async function voice(list) {
   const groups = [];
-  for (let i = 0; i < list.length; i += 10) groups.push(script(list.slice(i, i + 10)));
+  for (let i = 0; i < list.length; i += 5) groups.push(script(list.slice(i, i + 5)));
   // A spoken closing line marks the loop point and means that if a voice model clips
   // the tail of its text, it clips this line rather than the last answer.
   const END = "\n\nEnd of answers.";
@@ -163,7 +163,7 @@ async function voice(list) {
     );
     const body = wavs.map((w) => w.subarray(44));
     // One second of silence so the loop restart never cuts into speech.
-    body.push(new Uint8Array(48000));
+    body.push(new Uint8Array(44100));
     const size = body.reduce((n, b) => n + b.length, 0);
     const head = wavs[0].slice(0, 44), view = new DataView(head.buffer);
     view.setUint32(4, 36 + size, true); view.setUint32(40, size, true);
