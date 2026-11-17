@@ -51,7 +51,7 @@ async function ask(model, key, images, ms) {
                   "Give each question its number: use the number printed beside it when there is one (a later page may start at 26, for example); " +
                   "when a page has no printed numbers, keep counting on from the last question of the page before. Do not skip or merge questions.\n\n" +
                   "Only the terms or phrases to be answered count as questions. Everything else on the page is not a question and must not appear in your output or be counted in the numbering: " +
-                  "titles and headings, course or test names, section labels, instructions and example lines, name/date/student-number fields, point values and marks, page numbers, footers, and anything outside the paper itself (desk, screen edges, browser bars). " +
+                  "titles and headings, course or test names, section labels, instructions and example lines, notices, rules and policy paragraphs of any kind, name/date/student-number fields, point values and marks, page numbers, footers, and anything outside the paper itself (desk, screen edges, browser bars). " +
                   "Read instruction lines only to learn what is being asked for (for example a definition, a synonym, or a translation), then apply that to the terms beneath them. " +
                   "If an example in the instructions already shows a term with its answer, it is an example, not a question.",
               },
