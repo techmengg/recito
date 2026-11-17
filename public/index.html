@@ -32,7 +32,6 @@
   #play { flex:1; max-width:608px; height:64px; border:0; border-radius:20px; background:var(--accent); color:#06281a; font-size:19px; font-weight:700; }
   #play.on { background:var(--danger); color:#2b0606; }
   #play:disabled { opacity:.4; }
-  select { height:64px; border-radius:20px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; padding:0 10px; }
 </style>
 </head>
 <body>
@@ -46,10 +45,6 @@
 
 <div class="bar">
   <button id="play" disabled>▶ Play</button>
-  <select id="rate" aria-label="Speed">
-    <option value="0.85">0.85×</option><option value="1" selected>1×</option>
-    <option value="1.15">1.15×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option>
-  </select>
 </div>
 <audio id="audio" playsinline preload="auto"></audio>
 
@@ -60,6 +55,7 @@ let images = [];          // [{b64, url}]
 let answers = null;       // solved answers for current images
 let audioUrl = null;      // one joined, loopable file for the current answers
 let playing = false, version = 0, prep = null, timer = 0;
+const RATE = 0.65;        // fixed playback speed
 
 const say = (t, err) => { statusEl.textContent = t; statusEl.className = err ? "err" : ""; };
 
@@ -276,7 +272,7 @@ function setPlaying(on) {
 
 function playUrl(url, loop) {
   audio.loop = loop; audio.src = url;
-  audio.playbackRate = +$("rate").value;
+  audio.playbackRate = RATE;
   return audio.play().catch(() => {});
 }
 
@@ -327,9 +323,8 @@ audio.addEventListener("ended", () => {
   if (full) { audio.currentTime = 0; audio.play().catch(() => {}); }
   else next();
 });
-$("rate").onchange = () => { audio.playbackRate = +$("rate").value; };
 // Setting src resets playbackRate on some browsers.
-audio.addEventListener("loadedmetadata", () => { audio.playbackRate = +$("rate").value; });
+audio.addEventListener("loadedmetadata", () => { audio.playbackRate = RATE; });
 if ("mediaSession" in navigator) {
   navigator.mediaSession.setActionHandler("play", () => { if (audioUrl || tracks[0]) { audio.play(); setPlaying(true); } });
   navigator.mediaSession.setActionHandler("pause", () => { audio.pause(); setPlaying(false); });
