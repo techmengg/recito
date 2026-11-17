@@ -58,7 +58,7 @@ const $ = (id) => document.getElementById(id);
 const audio = $("audio"), playBtn = $("play"), statusEl = $("status");
 let images = [];          // [{b64, url}]
 let answers = null;       // solved answers for current images
-let audioUrl = null;      // looping mp3 for current answers
+let audioUrl = null;      // one joined, loopable file for the current answers
 let playing = false, version = 0, prep = null, timer = 0;
 
 const say = (t, err) => { statusEl.textContent = t; statusEl.className = err ? "err" : ""; };
@@ -90,6 +90,8 @@ function invalidate() {
   version++; prep = null; answers = null; clearTimeout(timer);
   if (audioUrl) URL.revokeObjectURL(audioUrl);
   audioUrl = null;
+  tracks.forEach((u) => URL.revokeObjectURL(u));
+  tracks = []; total = 0;
   $("list").innerHTML = "";
   if (playing) stop();
   playBtn.disabled = !images.length;
@@ -147,31 +149,64 @@ function renderAnswers() {
   });
 }
 
-// The natural voice is generated five answers at a time, in parallel, and the WAV pieces
-// are joined here into one loopable file. If any piece fails, the whole set is redone
-// with the backup voice so the loop never mixes voices or has gaps.
-async function voice(list) {
+// --- Voice -----------------------------------------------------------------------------
+// The voice is generated five answers at a time, in order. Each piece becomes a playable
+// track as soon as it arrives, so the first answers can start within a few seconds while
+// the rest are still being made. When every piece is in, they are joined into one file
+// (audioUrl) and playback settles into looping that single file.
+let tracks = [], total = 0;   // per-piece blob URLs, and how many pieces there will be
+let pos = 0, full = false, waiting = false;
+
+function wavBlob(header, bodies) {
+  const size = bodies.reduce((n, b) => n + b.length, 0);
+  const head = header.slice(0, 44), view = new DataView(head.buffer);
+  view.setUint32(4, 36 + size, true); view.setUint32(40, size, true);
+  return new Blob([head, ...bodies], { type: "audio/wav" });
+}
+
+// Resolves once the first piece is playable; the remaining pieces keep arriving after that.
+function voice(list, mine) {
   const groups = [];
   for (let i = 0; i < list.length; i += 5) groups.push(script(list.slice(i, i + 5)));
-  // A spoken closing line marks the loop point and means that if a voice model clips
-  // the tail of its text, it clips this line rather than the last answer.
+  // A spoken closing line marks the loop point and means that if the voice clips the tail
+  // of its text, it clips this line rather than the last answer.
   const END = "\n\nEnd of answers.";
   groups[groups.length - 1] += END;
-  try {
-    const wavs = await Promise.all(
-      groups.map(async (text) => new Uint8Array(await (await api("/api/tts", { text })).arrayBuffer())),
-    );
-    const body = wavs.map((w) => w.subarray(44));
-    // One second of silence so the loop restart never cuts into speech.
-    body.push(new Uint8Array(44100));
-    const size = body.reduce((n, b) => n + b.length, 0);
-    const head = wavs[0].slice(0, 44), view = new DataView(head.buffer);
-    view.setUint32(4, 36 + size, true); view.setUint32(40, size, true);
-    return new Blob([head, ...body], { type: "audio/wav" });
-  } catch {
-    const r = await api("/api/tts", { text: script(list) + END, engine: "basic" });
-    return r.blob();
-  }
+  // One second of silence so the loop restart never cuts into speech.
+  const pad = new Uint8Array(44100);
+  tracks = []; total = groups.length;
+
+  return new Promise((ready, fail) => {
+    (async () => {
+      const bodies = [];
+      let header;
+      try {
+        for (let i = 0; i < groups.length; i++) {
+          const w = new Uint8Array(await (await api("/api/tts", { text: groups[i] })).arrayBuffer());
+          if (mine !== version) return ready(false);
+          header ||= w;
+          const body = i === groups.length - 1 ? [w.subarray(44), pad] : [w.subarray(44)];
+          bodies.push(...body);
+          tracks[i] = URL.createObjectURL(wavBlob(w, body));
+          if (i === 0) ready(true);
+          resume();
+        }
+        audioUrl = URL.createObjectURL(wavBlob(header, bodies));
+        resume();
+      } catch {
+        // If any piece fails, redo the whole set with the backup voice so the loop is complete.
+        try {
+          const r = await api("/api/tts", { text: script(list) + END, engine: "basic" });
+          const blob = await r.blob();
+          if (mine !== version) return ready(false);
+          tracks.forEach((u) => URL.revokeObjectURL(u));
+          tracks = []; total = 0;
+          audioUrl = URL.createObjectURL(blob);
+          ready(true); resume();
+        } catch (e) { fail(e); }
+      }
+    })();
+  });
 }
 
 function ensure() {
@@ -193,16 +228,15 @@ async function prepare(mine) {
     if (!data.answers?.length) throw new Error("No questions found in the photos");
     answers = data.answers; renderAnswers();
   }
-  if (!audioUrl) {
+  if (!audioUrl && !tracks[0]) {
     say("Generating voice…");
-    const blob = await voice(answers);
-    if (mine !== version) return false;
-    audioUrl = URL.createObjectURL(blob);
+    if (!(await voice(answers, mine))) return false;
   }
   if (!playing) say(`${answers.length} answers ready. Press Play.`);
   return true;
 }
 
+// --- Playback --------------------------------------------------------------------------
 function setPlaying(on) {
   playing = on;
   playBtn.textContent = on ? "■ Stop" : "▶ Play";
@@ -210,22 +244,37 @@ function setPlaying(on) {
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = on ? "playing" : "paused";
 }
 
+function playUrl(url, loop) {
+  audio.loop = loop; audio.src = url;
+  audio.playbackRate = +$("rate").value;
+  return audio.play().catch(() => {});
+}
+
+// Plays whatever comes next: the following piece, the joined loop once the first pass is
+// done, or silence (which keeps the audio session alive) while a piece is still on its way.
+function next() {
+  if (!playing) return;
+  if (audioUrl && pos >= total) { full = true; waiting = false; return playUrl(audioUrl, true); }
+  if (tracks[pos]) { waiting = false; return playUrl(tracks[pos++], false); }
+  waiting = true; playUrl(SILENCE, true);
+}
+function resume() { if (playing && waiting) next(); }
+
 function stop() {
   audio.pause(); setPlaying(false);
-  if (audioUrl) say(`${answers.length} answers ready. Press Play.`);
+  if (answers && (audioUrl || tracks[0])) say(`${answers.length} answers ready. Press Play.`);
 }
 
 async function start() {
   setPlaying(true);
-  audio.loop = true;
-  if (!audioUrl) { audio.src = SILENCE; audio.play().catch(() => {}); }
+  full = false; waiting = true;
+  pos = audioUrl ? total : 0;
+  playUrl(SILENCE, true);
   try {
     const v = version;
     if (!(await ensure()) || !playing || v !== version) return;
-    audio.src = audioUrl;
-    audio.playbackRate = +$("rate").value;
-    await audio.play();
-    say(`Looping ${answers.length} answers. Keeps playing with the screen locked.`);
+    resume();
+    say(`Playing ${answers.length} answers on repeat. Keeps going with the screen locked.`);
     if ("mediaSession" in navigator)
       navigator.mediaSession.metadata = new MediaMetadata({ title: `${answers.length} answers`, artist: "Recito" });
   } catch (e) {
@@ -234,13 +283,17 @@ async function start() {
 }
 
 playBtn.onclick = () => (playing ? stop() : start());
-// Safety net in case a browser ignores the loop flag: restart by hand when the track ends.
-audio.addEventListener("ended", () => { if (playing) { audio.currentTime = 0; audio.play().catch(() => {}); } });
+audio.addEventListener("ended", () => {
+  if (!playing) return;
+  // On the joined file this is only a safety net in case a browser ignores the loop flag.
+  if (full) { audio.currentTime = 0; audio.play().catch(() => {}); }
+  else next();
+});
 $("rate").onchange = () => { audio.playbackRate = +$("rate").value; };
 // Setting src resets playbackRate on some browsers.
 audio.addEventListener("loadedmetadata", () => { audio.playbackRate = +$("rate").value; });
 if ("mediaSession" in navigator) {
-  navigator.mediaSession.setActionHandler("play", () => { if (audioUrl) { audio.play(); setPlaying(true); } });
+  navigator.mediaSession.setActionHandler("play", () => { if (audioUrl || tracks[0]) { audio.play(); setPlaying(true); } });
   navigator.mediaSession.setActionHandler("pause", () => { audio.pause(); setPlaying(false); });
 }
 </script>
