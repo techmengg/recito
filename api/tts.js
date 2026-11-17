@@ -9,7 +9,7 @@ const SPEED = +process.env.TTS_SPEED || 1;
 
 // Loading the model takes about a second, so keep it for later requests to this instance.
 let engine;
-function piper(text) {
+function piper(text, gap) {
   engine ||= sherpa.createOfflineTts({
     offlineTtsModelConfig: {
       offlineTtsVitsModelConfig: {
@@ -26,8 +26,21 @@ function piper(text) {
     },
     maxNumSentences: 1,
   });
-  const { samples, sampleRate } = engine.generate({ text, sid: 0, speed: SPEED });
-  if (!samples?.length) throw new Error("Voice returned no audio");
+  // Each blank-line-separated paragraph (one answer) is voiced on its own and followed by
+  // `gap` seconds of silence, so there is a clear pause between answers and between pieces.
+  const parts = [];
+  let sampleRate = 22050, length = 0;
+  for (const p of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
+    const g = engine.generate({ text: p, sid: 0, speed: SPEED });
+    if (!g.samples?.length) throw new Error("Voice returned no audio");
+    sampleRate = g.sampleRate;
+    parts.push(g.samples, new Float32Array(Math.round(gap * sampleRate)));
+    length += g.samples.length + Math.round(gap * sampleRate);
+  }
+  if (!length) throw new Error("Voice returned no audio");
+  const samples = new Float32Array(length);
+  let at = 0;
+  for (const p of parts) { samples.set(p, at); at += p.length; }
 
   // 16-bit mono WAV with a plain 44-byte header, which is what the page expects when joining pieces.
   const out = Buffer.alloc(44 + samples.length * 2);
@@ -77,7 +90,7 @@ export default async function handler(req, res) {
   if (!text.trim()) return res.status(400).json({ error: "No text" });
 
   try {
-    const { type, audio } = req.body?.engine === "basic" ? await basic(text) : piper(text);
+    const { type, audio } = req.body?.engine === "basic" ? await basic(text) : piper(text, Math.min(3, Math.max(0, +req.body?.gap || 0)));
     res.setHeader("Content-Type", type);
     res.setHeader("Cache-Control", "no-store");
     res.status(200).send(audio);

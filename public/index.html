@@ -55,7 +55,8 @@ let images = [];          // [{b64, url}]
 let answers = null;       // solved answers for current images
 let audioUrl = null;      // one joined, loopable file for the current answers
 let playing = false, version = 0, prep = null, timer = 0;
-const RATE = 0.7;         // fixed playback speed
+const RATE = 0.6;         // fixed playback speed
+const GAP = 1;            // seconds of silence heard after each answer
 
 const say = (t, err) => { statusEl.textContent = t; statusEl.className = err ? "err" : ""; };
 
@@ -204,7 +205,7 @@ function voice(list, mine) {
       const worker = async () => {
         while (!failed && nextUp < groups.length) {
           const i = nextUp++;
-          const w = new Uint8Array(await (await api("/api/tts", { text: groups[i] })).arrayBuffer());
+          const w = new Uint8Array(await (await api("/api/tts", { text: groups[i], gap: GAP * RATE })).arrayBuffer());
           if (failed || mine !== version) return;
           wavs[i] = i === groups.length - 1 ? [w, w.subarray(44), pad] : [w, w.subarray(44)];
           tracks[i] = URL.createObjectURL(wavBlob(w, wavs[i].slice(1)));
