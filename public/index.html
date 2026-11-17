@@ -119,20 +119,41 @@ $("file").onchange = async (e) => {
   renderThumbs(); invalidate();
 };
 
+// Built for patchy mobile data and school Wi-Fi: every request has a time limit, the whole
+// response is downloaded before it counts as a success, and dropped connections or server
+// hiccups are retried twice before giving up.
 async function api(path, body) {
-  for (;;) {
-    const r = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-code": localStorage.getItem("code") || "" },
-      body: JSON.stringify(body),
-    });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let attempt = 1; ; attempt++) {
+    const ctl = new AbortController(), limit = setTimeout(() => ctl.abort(), 50000);
+    let r, buf;
+    try {
+      r = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-code": localStorage.getItem("code") || "" },
+        body: JSON.stringify(body),
+        signal: ctl.signal,
+      });
+      buf = await r.arrayBuffer();
+    } catch {
+      clearTimeout(limit);
+      if (attempt >= 3) throw new Error("Connection problem. Check your signal and press Play again.");
+      await sleep(700 * attempt); continue;
+    }
+    clearTimeout(limit);
     if (r.status === 401) {
       const code = prompt("Access code");
       if (!code) throw new Error("Access code required");
-      localStorage.setItem("code", code); continue;
+      localStorage.setItem("code", code); attempt--; continue;
     }
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Request failed (" + r.status + ")");
-    return r;
+    const json = () => JSON.parse(new TextDecoder().decode(buf));
+    if (!r.ok) {
+      if (r.status >= 500 && attempt < 3) { await sleep(700 * attempt); continue; }
+      let message; try { message = json().error; } catch {}
+      throw new Error(message || "Request failed (" + r.status + ")");
+    }
+    const type = r.headers.get("content-type") || "";
+    return { json: async () => json(), arrayBuffer: async () => buf, blob: async () => new Blob([buf], { type }) };
   }
 }
 
@@ -199,6 +220,7 @@ function voice(list, mine) {
         await Promise.all([worker(), worker(), worker()]);
         if (mine !== version) return ready(false);
         audioUrl = URL.createObjectURL(wavBlob(wavs[0][0], wavs.flatMap((w) => w.slice(1))));
+        if (playing) say(`All ${list.length} answers loaded. Looping; no connection needed from here.`);
         resume();
       } catch {
         failed = true;
@@ -282,7 +304,9 @@ async function start() {
     const v = version;
     if (!(await ensure()) || !playing || v !== version) return;
     resume();
-    say(`Playing ${answers.length} answers on repeat. Keeps going with the screen locked.`);
+    say(audioUrl
+      ? `All ${answers.length} answers loaded. Looping; no connection needed from here.`
+      : `Playing. Still loading the rest of ${answers.length} answers…`);
     if ("mediaSession" in navigator)
       navigator.mediaSession.metadata = new MediaMetadata({ title: `${answers.length} answers`, artist: "Recito" });
   } catch (e) {
@@ -291,6 +315,12 @@ async function start() {
 }
 
 playBtn.onclick = () => (playing ? stop() : start());
+// Wake the voice server as the page opens so the first real request does not pay for its start-up.
+fetch("/api/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "x-code": localStorage.getItem("code") || "" },
+  body: JSON.stringify({ text: "Ready." }),
+}).catch(() => {});
 audio.addEventListener("ended", () => {
   if (!playing) return;
   // On the joined file this is only a safety net in case a browser ignores the loop flag.
