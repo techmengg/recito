@@ -150,7 +150,7 @@ function renderAnswers() {
 }
 
 // --- Voice -----------------------------------------------------------------------------
-// The voice is generated five answers at a time, in order. Each piece becomes a playable
+// The voice is generated a few answers at a time. Each piece becomes a playable
 // track as soon as it arrives, so the first answers can start within a few seconds while
 // the rest are still being made. When every piece is in, they are joined into one file
 // (audioUrl) and playback settles into looping that single file.
@@ -166,8 +166,11 @@ function wavBlob(header, bodies) {
 
 // Resolves once the first piece is playable; the remaining pieces keep arriving after that.
 function voice(list, mine) {
+  // The first pieces are short so speech starts quickly; each later piece is finished
+  // well before the one ahead of it has played through.
   const groups = [];
-  for (let i = 0; i < list.length; i += 5) groups.push(script(list.slice(i, i + 5)));
+  for (let i = 0, n = 2; i < list.length; i += n, n = groups.length === 1 ? 3 : 5)
+    groups.push(script(list.slice(i, i + n)));
   // A spoken closing line marks the loop point and means that if the voice clips the tail
   // of its text, it clips this line rather than the last answer.
   const END = "\n\nEnd of answers.";
@@ -178,22 +181,27 @@ function voice(list, mine) {
 
   return new Promise((ready, fail) => {
     (async () => {
-      const bodies = [];
-      let header;
-      try {
-        for (let i = 0; i < groups.length; i++) {
+      const wavs = [];
+      let nextUp = 0, failed = false;
+      // Three requests at a time, handed out in order so the earliest pieces come back first.
+      const worker = async () => {
+        while (!failed && nextUp < groups.length) {
+          const i = nextUp++;
           const w = new Uint8Array(await (await api("/api/tts", { text: groups[i] })).arrayBuffer());
-          if (mine !== version) return ready(false);
-          header ||= w;
-          const body = i === groups.length - 1 ? [w.subarray(44), pad] : [w.subarray(44)];
-          bodies.push(...body);
-          tracks[i] = URL.createObjectURL(wavBlob(w, body));
+          if (failed || mine !== version) return;
+          wavs[i] = i === groups.length - 1 ? [w, w.subarray(44), pad] : [w, w.subarray(44)];
+          tracks[i] = URL.createObjectURL(wavBlob(w, wavs[i].slice(1)));
           if (i === 0) ready(true);
           resume();
         }
-        audioUrl = URL.createObjectURL(wavBlob(header, bodies));
+      };
+      try {
+        await Promise.all([worker(), worker(), worker()]);
+        if (mine !== version) return ready(false);
+        audioUrl = URL.createObjectURL(wavBlob(wavs[0][0], wavs.flatMap((w) => w.slice(1))));
         resume();
       } catch {
+        failed = true;
         // If any piece fails, redo the whole set with the backup voice so the loop is complete.
         try {
           const r = await api("/api/tts", { text: script(list) + END, engine: "basic" });

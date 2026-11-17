@@ -1,5 +1,6 @@
 {
   "outputDirectory": "public",
+  "fluid": true,
   "functions": {
     "api/solve.js": { "maxDuration": 60 },
     "api/tts.js": { "maxDuration": 60, "includeFiles": "{models,node_modules/sherpa-onnx}/**" }
