@@ -1,10 +1,11 @@
 import SYSTEM from "./_prompt.js";
 
-// The strongest model is tried first but only waited on briefly, because the free tier
-// often reports it as overloaded; the lite models run alongside as the fast fallback.
-const STRONG = process.env.SOLVE_MODEL || "gemini-3.8-flash";
+// The free tier gives the lite models 500 requests a day each, against 20 a day for the
+// bigger Flash models (which are also often overloaded), so the lite models do the work.
+// Set SOLVE_MODEL to try a stronger model first; it is only waited on briefly.
+const STRONG = process.env.SOLVE_MODEL || "";
 const STRONG_WAIT_MS = +process.env.SOLVE_STRONG_WAIT_MS || 9000;
-const FAST = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"];
+const FAST = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 
 const SCHEMA = {
   type: "OBJECT",
@@ -93,10 +94,12 @@ export default async function handler(req, res) {
 
   const backup = fast(key, images);
   backup.catch(() => {});
-  try {
-    const answers = await ask(STRONG, key, images, STRONG_WAIT_MS);
-    return res.status(200).json({ answers, model: STRONG });
-  } catch {}
+  if (STRONG) {
+    try {
+      const answers = await ask(STRONG, key, images, STRONG_WAIT_MS);
+      return res.status(200).json({ answers, model: STRONG });
+    } catch {}
+  }
   try {
     res.status(200).json(await backup);
   } catch (e) {
